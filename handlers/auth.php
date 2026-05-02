@@ -8,17 +8,27 @@
 
 function handleAuthLogin(PDO $pdo, array $body): void
 {
-    if (empty($body['email']) || empty($body['password'])) {
-        respond(400, null, 'email and password are required');
+    $login = trim((string) ($body['login'] ?? $body['email'] ?? $body['username'] ?? ''));
+    $password = (string) ($body['password'] ?? '');
+
+    if ($login === '' || $password === '') {
+        respond(400, null, 'login and password are required');
     }
 
-    // Fetch admin by email
-    $stmt = $pdo->prepare('SELECT * FROM admins WHERE email = :email LIMIT 1');
-    $stmt->execute([':email' => strtolower(trim($body['email']))]);
+    // Allow login with either username or email.
+    $stmt = $pdo->prepare(
+        'SELECT * FROM admins
+         WHERE username = :username OR email = :email
+         LIMIT 1'
+    );
+    $stmt->execute([
+        ':username' => $login,
+        ':email' => strtolower($login),
+    ]);
     $admin = $stmt->fetch();
 
     // Use password_verify to check bcrypt hash (timing-safe)
-    if (!$admin || !password_verify($body['password'], $admin['password_hash'])) {
+    if (!$admin || !password_verify($password, $admin['password_hash'])) {
         respond(401, null, 'Invalid credentials');
     }
 

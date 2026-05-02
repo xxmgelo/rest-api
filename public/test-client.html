@@ -19,7 +19,25 @@
   h1 span { color:var(--accent); }
   .sub { color:var(--muted); font-size:14px; margin-bottom:24px; }
   .grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
-  @media(max-width:700px){.grid{grid-template-columns:1fr;}}
+  @media(max-width:700px){
+    .grid{grid-template-columns:1fr;}
+    h1{font-size:24px;}
+    .wrap{padding:24px 16px;}
+    .quick-load-row{gap:6px;}
+    .preset{font-size:10px;padding:5px 10px;}
+    .row{flex-direction:column;}
+    .row .field{max-width:100%!important;}
+    #savedTokenRow{flex-direction:column;}
+    #savedTokenRow>*{width:100%;}
+    .btn{width:100%;}
+  }
+  @media(max-width:480px){
+    h1{font-size:20px;}
+    .sub{font-size:12px;}
+    .panel-head{flex-wrap:wrap;gap:6px;}
+    .quick-load-row{justify-content:center;}
+    textarea{min-height:100px;}
+  }
   label { display:block; font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--muted); letter-spacing:1px; margin-bottom:6px; text-transform:uppercase; }
   select, input, textarea {
     width:100%; background:var(--code-bg); border:1px solid var(--border);
@@ -85,7 +103,7 @@
   <!-- Token store -->
   <div class="field">
     <label>Saved Bearer Token (auto-filled after login)</label>
-    <div style="display:flex;gap:8px;">
+    <div id="savedTokenRow" style="display:flex;gap:8px;">
       <input type="text" id="savedToken" placeholder="Token will appear here after login..." />
       <button class="btn btn-outline btn-sm" onclick="useToken()">USE</button>
       <button class="btn btn-outline btn-sm" onclick="clearToken()">CLEAR</button>
@@ -117,6 +135,21 @@
         <label>Authorization Header</label>
         <input type="text" id="authHeader" placeholder="Bearer your-token-here" />
       </div>
+      <div class="row">
+        <div class="field">
+          <label>School Year</label>
+          <select id="schoolYearSelect" onchange="syncStudentBodyContext()">
+            <option value="">Loading school years...</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Semester</label>
+          <select id="semesterSelect" onchange="syncStudentBodyContext()">
+            <option value="1st Semester">1st Semester</option>
+            <option value="2nd Semester">2nd Semester</option>
+          </select>
+        </div>
+      </div>
       <div class="field">
         <label>Request Body (JSON)</label>
         <textarea id="body" placeholder='{ "key": "value" }'></textarea>
@@ -139,13 +172,17 @@
 </div>
 
 <script>
-const BASE = window.location.origin;
-const API_PATH = window.location.pathname.split('/public')[0] || '';
+const IS_FILE_PROTOCOL = window.location.protocol === 'file:';
+const PROJECT_PATH = window.location.pathname.split('/public')[0] || '';
+const HtdocsMatch = PROJECT_PATH.match(/\/htdocs(\/.*)$/i);
+const PROJECT_ROOT = HtdocsMatch ? HtdocsMatch[1] : '/rest-api';
+const BASE = IS_FILE_PROTOCOL ? 'http://localhost' : window.location.origin;
+const API_PATH = IS_FILE_PROTOCOL ? PROJECT_ROOT : PROJECT_PATH;
 
 const PRESETS = {
   login: {
     method: 'POST', url: API_PATH + '/api/auth/login',
-    body: '{\n  "email": "admin@aclc.edu",\n  "password": "your-password"\n}'
+    body: '{\n  "login": "admin@aclc.edu",\n  "password": "your-password"\n}'
   },
   getBseStudents: {
     method: 'GET', url: API_PATH + '/api/bse-students', body: ''
@@ -170,14 +207,14 @@ const PRESETS = {
   },
   createBseStudent: {
     method: 'POST', url: API_PATH + '/api/bse-students',
-    body: '{\n  "student_id": "BSE-2024-001",\n  "name": "Kuya Mac",\n  "program": "BSE",\n  "year_level": "1st Year",\n  "gmail": "kuya.mac@gmail.com"\n}'
+    body: '{\n  "student_id": "BSE-2024-001",\n  "name": "Kuya Mac",\n  "program": "BSE",\n  "year_level": "1st Year",\n  "gmail": "kuya.mac@gmail.com",\n  "school_year_id": 0,\n  "semester": "1st Semester"\n}'
   },
   getRemoved: {
     method: 'GET', url: API_PATH + '/api/removed-students', body: ''
   },
   createBsisStudent: {
     method: 'POST', url: API_PATH + '/api/bsis-students',
-    body: '{\n  "student_id": "BSIS-2024-001",\n  "name": "Kuya Meon",\n  "program": "BSIS",\n  "year_level": "1st Year",\n  "gmail": "kuya.meon@gmail.com"\n}'
+    body: '{\n  "student_id": "BSIS-2024-001",\n  "name": "Kuya Meon",\n  "program": "BSIS",\n  "year_level": "1st Year",\n  "gmail": "kuya.meon@gmail.com",\n  "school_year_id": 0,\n  "semester": "1st Semester"\n}'
   },
   logout: {
     method: 'POST', url: API_PATH + '/api/auth/logout', body: ''
@@ -191,6 +228,7 @@ function loadPreset(name) {
   document.getElementById('url').value    = p.url;
   document.getElementById('body').value   = p.body;
   updateMethod();
+  syncStudentBodyContext();
 }
 
 function updateMethod() {
@@ -199,6 +237,61 @@ function updateMethod() {
   bodyField.disabled = m === 'GET' || m === 'DELETE';
   if (bodyField.disabled) bodyField.style.opacity = '0.4';
   else bodyField.style.opacity = '1';
+}
+
+function getSchoolYearApiUrl() {
+  return 'http://localhost/aclcapi/api/school_years.php';
+}
+
+async function loadSchoolYears() {
+  const select = document.getElementById('schoolYearSelect');
+  try {
+    const res = await fetch(getSchoolYearApiUrl());
+    const data = await res.json();
+    const items = Array.isArray(data) ? data : [];
+
+    if (!items.length) {
+      select.innerHTML = '<option value="">No school years found</option>';
+      return;
+    }
+
+    select.innerHTML = items
+      .map((item, index) => {
+        const selected = item.is_active || index === items.length - 1 ? ' selected' : '';
+        return `<option value="${item.id}"${selected}>SY ${item.label}</option>`;
+      })
+      .join('');
+    syncStudentBodyContext();
+  } catch (error) {
+    select.innerHTML = '<option value="">Unable to load school years</option>';
+  }
+}
+
+function syncStudentBodyContext() {
+  const url = document.getElementById('url').value.trim();
+  if (!/\/api\/(?:bse-students|bsis-students)$/i.test(url)) {
+    return;
+  }
+
+  const method = document.getElementById('method').value;
+  if (method !== 'POST' && method !== 'PATCH' && method !== 'PUT') {
+    return;
+  }
+
+  const bodyField = document.getElementById('body');
+  const raw = bodyField.value.trim();
+  if (!raw) {
+    return;
+  }
+
+  try {
+    const payload = JSON.parse(raw);
+    const schoolYearValue = Number(document.getElementById('schoolYearSelect').value || 0);
+    const semesterValue = document.getElementById('semesterSelect').value || '1st Semester';
+    payload.school_year_id = schoolYearValue;
+    payload.semester = semesterValue;
+    bodyField.value = JSON.stringify(payload, null, 2);
+  } catch {}
 }
 
 function useToken() {
@@ -293,6 +386,7 @@ function highlight(json) {
 
 // Init
 updateMethod();
+loadSchoolYears();
 </script>
 </body>
 </html>

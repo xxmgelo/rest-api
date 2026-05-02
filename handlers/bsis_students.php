@@ -19,7 +19,12 @@ function handleBsisStudents(PDO $pdo, string $method, ?int $id, array $body): vo
         /* ── GET ── */
         case 'GET':
             if ($id) {
-                $stmt = $pdo->prepare('SELECT * FROM bsis_students WHERE id = :id');
+                $stmt = $pdo->prepare(
+                    'SELECT s.id, s.student_id, s.name, s.program, s.year_level, s.gmail, s.school_year_id, s.semester, sy.label AS school_year_label
+                     FROM bsis_students s
+                     LEFT JOIN school_years sy ON sy.id = s.school_year_id
+                     WHERE s.id = :id'
+                );
                 $stmt->execute([':id' => $id]);
                 $student = $stmt->fetch();
                 $student
@@ -28,19 +33,32 @@ function handleBsisStudents(PDO $pdo, string $method, ?int $id, array $body): vo
             } else {
                 $search  = $_GET['search']   ?? null;
                 $year    = $_GET['year']     ?? null;
+                $schoolYearId = isset($_GET['school_year_id']) ? (int) $_GET['school_year_id'] : 0;
+                $semester = trim((string) ($_GET['semester'] ?? ''));
 
-                $sql    = 'SELECT * FROM bsis_students WHERE 1=1';
+                $sql    = 'SELECT s.id, s.student_id, s.name, s.program, s.year_level, s.gmail, s.school_year_id, s.semester, sy.label AS school_year_label
+                           FROM bsis_students s
+                           LEFT JOIN school_years sy ON sy.id = s.school_year_id
+                           WHERE 1=1';
                 $params = [];
 
                 if ($search) {
-                    $sql           .= ' AND (name LIKE :search OR student_id LIKE :search)';
+                    $sql           .= ' AND (s.name LIKE :search OR s.student_id LIKE :search)';
                     $params[':search'] = '%' . $search . '%';
                 }
                 if ($year) {
-                    $sql         .= ' AND year_level = :year';
+                    $sql         .= ' AND s.year_level = :year';
                     $params[':year'] = $year;
                 }
-                $sql .= ' ORDER BY name';
+                if ($schoolYearId > 0) {
+                    $sql .= ' AND s.school_year_id = :school_year_id';
+                    $params[':school_year_id'] = $schoolYearId;
+                }
+                if ($semester !== '') {
+                    $sql .= ' AND s.semester = :semester';
+                    $params[':semester'] = $semester;
+                }
+                $sql .= ' ORDER BY s.name';
 
                 $stmt = $pdo->prepare($sql);
                 $stmt->execute($params);
@@ -53,11 +71,13 @@ function handleBsisStudents(PDO $pdo, string $method, ?int $id, array $body): vo
             $errors = [];
             if (empty($body['student_id'])) $errors[] = 'student_id is required';
             if (empty($body['name']))     $errors[] = 'name is required';
+            if (empty($body['school_year_id'])) $errors[] = 'school_year_id is required';
+            if (empty($body['semester'])) $errors[] = 'semester is required';
             if ($errors) respond(400, null, implode(', ', $errors));
 
             $stmt = $pdo->prepare(
-                'INSERT INTO bsis_students (student_id, name, program, year_level, gmail)
-                 VALUES (:student_id, :name, :program, :year_level, :gmail)'
+                'INSERT INTO bsis_students (student_id, name, program, year_level, gmail, school_year_id, semester)
+                 VALUES (:student_id, :name, :program, :year_level, :gmail, :school_year_id, :semester)'
             );
 
             try {
@@ -67,8 +87,18 @@ function handleBsisStudents(PDO $pdo, string $method, ?int $id, array $body): vo
                     ':program'  => $body['program'] ?? 'BSIS',
                     ':year_level' => $body['year_level'] ?? '',
                     ':gmail'    => $body['gmail'] ?? '',
+                    ':school_year_id' => (int) ($body['school_year_id'] ?? 0),
+                    ':semester' => trim((string) ($body['semester'] ?? '')),
                 ]);
-                respond(201, ['id' => (int) $pdo->lastInsertId()]);
+                $newId = (int) $pdo->lastInsertId();
+                $fetchStmt = $pdo->prepare(
+                    'SELECT s.id, s.student_id, s.name, s.program, s.year_level, s.gmail, s.school_year_id, s.semester, sy.label AS school_year_label
+                     FROM bsis_students s
+                     LEFT JOIN school_years sy ON sy.id = s.school_year_id
+                     WHERE s.id = :id'
+                );
+                $fetchStmt->execute([':id' => $newId]);
+                respond(201, $fetchStmt->fetch() ?: ['id' => $newId]);
             } catch (PDOException $e) {
                 if ($e->getCode() === '23000') {
                     respond(409, null, 'Student ID already exists');
